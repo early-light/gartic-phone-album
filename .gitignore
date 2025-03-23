@@ -1,6 +1,7 @@
 # secrets
 .streamlit/secrets.toml
 .streamlit/gartic-phone-album-1581b58201e8.json
+.streamlit/gartic-phone-album-1581b58201e8.txt
 
 # ローカル開発時GIF保存用フォルダ
 images/

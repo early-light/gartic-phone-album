@@ -3,6 +3,9 @@ from PIL import Image
 import io
 import base64
 import math
+import os
+import tempfile
+import imageio.v3 as iio
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -15,12 +18,42 @@ PARENT_FOLDER_ID = "1NNXwYExNh-JRgV4e-UXH0xIUzDk8kVdM"
 # ページレイアウトをワイドに設定
 st.set_page_config(layout="wide")
 
-# --- Google Drive API 認証 ---
-credentials = service_account.Credentials.from_service_account_info(
-    st.secrets["google_service_account"],
-    scopes=["https://www.googleapis.com/auth/drive.readonly"]
-)
-drive_service = build("drive", "v3", credentials=credentials)
+# --- Google Drive API 認証（キャッシュ） ---
+@st.cache_resource(show_spinner=False)
+def get_drive_service():
+    credentials = service_account.Credentials.from_service_account_info(
+        st.secrets["google_service_account"],
+        scopes=["https://www.googleapis.com/auth/drive.readonly"]
+    )
+    return build("drive", "v3", credentials=credentials)
+
+# --- Google Drive から画像をダウンロード（キャッシュ） ---
+@st.cache_resource(show_spinner=False)
+def load_image_from_drive_once(drive_file_id: str, filename: str) -> str:
+    tmp_path = os.path.join(tempfile.gettempdir(), filename)
+
+    if not os.path.exists(tmp_path):
+        service = get_drive_service()
+        request = service.files().get_media(fileId=drive_file_id)
+        with open(tmp_path, "wb") as f:
+            downloader = MediaIoBaseDownload(f, request)
+            done = False
+            while not done:
+                _, done = downloader.next_chunk()
+
+    return tmp_path
+
+# --- GIFのフレーム分割（キャッシュ） ---
+@st.cache_data(show_spinner=False)
+def split_gif_frames_once(path: str):
+    return list(iio.imread(path))
+
+# --- サムネイル縮小（キャッシュ） ---
+@st.cache_data(show_spinner=False)
+def load_and_resize_thumbnail(path: str, size=(330, 256)):
+    img = Image.open(path)
+    img.thumbnail(size)
+    return img
 
 # === ログイン判定 ===
 def check_login():
@@ -52,7 +85,8 @@ def check_login():
 
 # --- Google Drive 操作 ---
 def list_date_folders():
-    results = drive_service.files().list(
+    service = get_drive_service()
+    results = service.files().list(
         q=f"'{PARENT_FOLDER_ID}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false",
         fields="files(id, name)",
         orderBy="name desc"
@@ -60,22 +94,13 @@ def list_date_folders():
     return results.get("files", [])
 
 def list_gif_files(folder_id):
-    results = drive_service.files().list(
+    service = get_drive_service()
+    results = service.files().list(
         q=f"'{folder_id}' in parents and mimeType='image/gif' and trashed=false",
         fields="files(id, name)",
         orderBy="name"
     ).execute()
     return results.get("files", [])
-
-def download_gif(file_id):
-    request = drive_service.files().get_media(fileId=file_id)
-    fh = io.BytesIO()
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while not done:
-        _, done = downloader.next_chunk()
-    fh.seek(0)
-    return fh
 
 # === サムネイル一覧表示 ===
 def show_thumbnail_grid():
@@ -135,19 +160,18 @@ def show_thumbnail_grid():
 
     cols = st.columns(5)
     for i, gif in enumerate(page_gifs):
-        gif_data = download_gif(gif["id"])
-        with Image.open(gif_data) as img:
-            img.seek(0)
-            thumbnail = img.copy().convert("RGBA")
+        gif_path = load_image_from_drive_once(gif["id"], gif["name"])
+        thumb_img = load_and_resize_thumbnail(gif_path)
 
         buf = io.BytesIO()
-        thumbnail.save(buf, format="PNG")
+        thumb_img.save(buf, format="PNG")
         b64_thumb = base64.b64encode(buf.getvalue()).decode("utf-8")
 
         with cols[i % 5]:
             st.image(f"data:image/png;base64,{b64_thumb}", width=300)
             if st.button("見る", key=f"view_{selected_date}_{gif['id']}"):
                 st.session_state.selected_gif_id = gif["id"]
+                st.session_state.gif_name = gif["name"]
                 st.session_state.page = "viewer"
                 st.session_state.frame_index = 0
                 st.rerun()
@@ -156,21 +180,14 @@ def show_thumbnail_grid():
 def show_viewer():
     st.title("GIF スライドショー")
     gif_id = st.session_state.get("selected_gif_id")
+    gif_name = st.session_state.get("gif_name")
 
-    if not gif_id:
+    if not gif_id or not gif_name:
         st.error("GIFが選択されていません")
         return
 
-    gif_data = download_gif(gif_id)
-
-    with Image.open(gif_data) as img:
-        frames = []
-        try:
-            while True:
-                frames.append(img.copy().convert("RGBA"))
-                img.seek(len(frames))
-        except EOFError:
-            pass
+    gif_path = load_image_from_drive_once(gif_id, gif_name)
+    frames = split_gif_frames_once(gif_path)
 
     if "frame_index" not in st.session_state:
         st.session_state.frame_index = 0

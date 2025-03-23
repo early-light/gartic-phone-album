@@ -1,0 +1,17 @@
+# secrets
+.streamlit/secrets.toml
+
+# ローカル開発時GIF保存用フォルダ
+images/
+
+# __pycache__などのPythonの不要ファイル
+__pycache__/
+*.pyc
+*.pyo
+
+# Jupyter関連
+.ipynb_checkpoints/
+
+# OS特有のゴミファイル
+.DS_Store
+Thumns.db

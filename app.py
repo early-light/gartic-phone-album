@@ -5,13 +5,12 @@ import base64
 import math
 import os
 import tempfile
-import imageio.v3 as iio
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
 # === 設定 ===
-GIFS_PER_PAGE = 50
+IMAGES_PER_PAGE = 50
 PASSWORD = st.secrets["auth"]["password"]
 PARENT_FOLDER_ID = "1NNXwYExNh-JRgV4e-UXH0xIUzDk8kVdM"
 
@@ -42,18 +41,6 @@ def load_image_from_drive_once(drive_file_id: str, filename: str) -> str:
                 _, done = downloader.next_chunk()
 
     return tmp_path
-
-# --- GIFのフレーム分割（キャッシュ） ---
-@st.cache_data(show_spinner=False)
-def split_gif_frames_once(path: str):
-    return list(iio.imread(path))
-
-# --- サムネイル縮小（キャッシュ） ---
-@st.cache_data(show_spinner=False)
-def load_and_resize_thumbnail(path: str, size=(330, 256)):
-    img = Image.open(path)
-    img.thumbnail(size)
-    return img
 
 # === ログイン判定 ===
 def check_login():
@@ -93,14 +80,29 @@ def list_date_folders():
     ).execute()
     return results.get("files", [])
 
-def list_gif_files(folder_id):
+def list_image_sets(folder_id):
     service = get_drive_service()
     results = service.files().list(
-        q=f"'{folder_id}' in parents and mimeType='image/gif' and trashed=false",
-        fields="files(id, name)",
-        orderBy="name"
+        q=f"'{folder_id}' in parents and mimeType contains 'image/' and trashed = false",
+        fields="files(id, name)"
     ).execute()
-    return results.get("files", [])
+    files = results.get("files", [])
+
+    image_sets = {}
+    for f in files:
+        if "_th.png" in f["name"]:
+            key = f["name"].replace("_th.png", "")
+            image_sets[key] = {"thumb": f}
+        elif "_" in f["name"] and f["name"].endswith(".png"):
+            base = f["name"].rsplit("_", 1)[0]
+            image_sets.setdefault(base, {}).setdefault("frames", []).append(f)
+
+    # フレームは順番に並べる
+    for v in image_sets.values():
+        if "frames" in v:
+            v["frames"] = sorted(v["frames"], key=lambda x: x["name"])
+
+    return image_sets
 
 # === サムネイル一覧表示 ===
 def show_thumbnail_grid():
@@ -114,17 +116,18 @@ def show_thumbnail_grid():
         st.session_state.page_index = 0
 
     folder_id = folder_options[selected_date]
-    gif_files = list_gif_files(folder_id)
+    image_sets = list_image_sets(folder_id)
+    keys = sorted(image_sets.keys())
 
-    total_pages = math.ceil(len(gif_files) / GIFS_PER_PAGE)
+    total_pages = math.ceil(len(keys) / IMAGES_PER_PAGE)
     current = st.session_state.page_index
-    start = current * GIFS_PER_PAGE
-    end = start + GIFS_PER_PAGE
-    page_gifs = gif_files[start:end]
+    start = current * IMAGES_PER_PAGE
+    end = start + IMAGES_PER_PAGE
+    page_keys = keys[start:end]
 
     header_col1, header_col2 = st.columns([8, 2])
     with header_col1:
-        st.subheader(f"{selected_date} のアルバム ({len(gif_files)} 件中 {start+1}〜{min(end, len(gif_files))})")
+        st.subheader(f"{selected_date} のアルバム ({len(keys)} 件中 {start+1}〜{min(end, len(keys))})")
     with header_col2:
         if total_pages > 1:
             nav_cols = st.columns([3.5, 1.5, 1.5, 1.5, 3.5])
@@ -159,19 +162,19 @@ def show_thumbnail_grid():
                     st.rerun()
 
     cols = st.columns(5)
-    for i, gif in enumerate(page_gifs):
-        gif_path = load_image_from_drive_once(gif["id"], gif["name"])
-        thumb_img = load_and_resize_thumbnail(gif_path)
-
+    for i, key in enumerate(page_keys):
+        info = image_sets[key]
+        thumb_path = load_image_from_drive_once(info["thumb"]["id"], info["thumb"]["name"])
+        thumb = Image.open(thumb_path)
         buf = io.BytesIO()
-        thumb_img.save(buf, format="PNG")
+        thumb.save(buf, format="PNG")
         b64_thumb = base64.b64encode(buf.getvalue()).decode("utf-8")
 
         with cols[i % 5]:
             st.image(f"data:image/png;base64,{b64_thumb}", width=300)
-            if st.button("見る", key=f"view_{selected_date}_{gif['id']}"):
-                st.session_state.selected_gif_id = gif["id"]
-                st.session_state.gif_name = gif["name"]
+            if st.button("見る", key=f"view_{selected_date}_{key}"):
+                st.session_state.selected_key = key
+                st.session_state.selected_date = selected_date
                 st.session_state.page = "viewer"
                 st.session_state.frame_index = 0
                 st.rerun()
@@ -179,26 +182,25 @@ def show_thumbnail_grid():
 # === GIF閲覧ページ ===
 def show_viewer():
     st.title("GIF スライドショー")
-    gif_id = st.session_state.get("selected_gif_id")
-    gif_name = st.session_state.get("gif_name")
-
-    if not gif_id or not gif_name:
+    key = st.session_state.get("selected_key")
+    date = st.session_state.get("selected_date")
+    if not key or not date:
         st.error("GIFが選択されていません")
         return
 
-    gif_path = load_image_from_drive_once(gif_id, gif_name)
-    frames = split_gif_frames_once(gif_path)
+    folders = list_date_folders()
+    folder_id = {f["name"]: f["id"] for f in folders}.get(date)
+    image_sets = list_image_sets(folder_id)
+    frames = image_sets[key]["frames"]
 
-    if "frame_index" not in st.session_state:
-        st.session_state.frame_index = 0
-
-    total_frames = len(frames)
-    idx = st.session_state.frame_index
+    idx = st.session_state.get("frame_index", 0)
+    img_path = load_image_from_drive_once(frames[idx]["id"], frames[idx]["name"])
+    img = Image.open(img_path)
 
     buf = io.BytesIO()
-    img = Image.fromarray(frames[idx])  # ← numpy配列をPillow画像に変換
     img.save(buf, format="PNG")
     b64_img = base64.b64encode(buf.getvalue()).decode("utf-8")
+
     st.markdown(
         f"""
         <div style="text-align: center; margin: 30px 0;">
@@ -210,16 +212,16 @@ def show_viewer():
 
     nav_cols = st.columns([1, 8, 1])
     with nav_cols[1]:
-        nav_subcols = st.columns(total_frames + 2)
+        nav_subcols = st.columns(len(frames) + 2)
         if nav_subcols[0].button("◀", use_container_width=True) and idx > 0:
             st.session_state.frame_index -= 1
             st.rerun()
-        for i in range(total_frames):
+        for i in range(len(frames)):
             label = f"{i+1}"
             if nav_subcols[i+1].button(label, use_container_width=True):
                 st.session_state.frame_index = i
                 st.rerun()
-        if nav_subcols[-1].button("▶", use_container_width=True) and idx < total_frames - 1:
+        if nav_subcols[-1].button("▶", use_container_width=True) and idx < len(frames) - 1:
             st.session_state.frame_index += 1
             st.rerun()
 

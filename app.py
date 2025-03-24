@@ -196,7 +196,8 @@ def show_viewer():
     idx = st.session_state.frame_index
 
     buf = io.BytesIO()
-    frames[idx].save(buf, format="PNG")
+    img = Image.fromarray(frames[idx])  # ← numpy配列をPillow画像に変換
+    img.save(buf, format="PNG")
     b64_img = base64.b64encode(buf.getvalue()).decode("utf-8")
     st.markdown(
         f"""

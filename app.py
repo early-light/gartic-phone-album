@@ -96,6 +96,10 @@ def split_gif_frames_once(gif_path: str):
         pass
     return frames
 
+# --- ローカルから画像読み込み ---
+def load_local_image(path: str):
+    return Image.open(path).convert("RGB")
+
 # === ログイン判定 ===
 def check_login():
     if "logged_in" not in st.session_state:

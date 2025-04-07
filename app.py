@@ -25,9 +25,34 @@ def get_drive_service():
     )
     return build("drive", "v3", credentials=credentials)
 
+# --- Drive更新時間を取得 ---
+@st.cache_data(show_spinner=False)
+def get_drive_modified_time(guild_id: str):
+    service = get_drive_service()
+    prefix = f"{guild_id}_"
+    results = service.files().list(
+        q=f"'{PARENT_FOLDER_ID}' in parents and name contains '{prefix}' and trashed = false",
+        fields="files(modifiedTime)",
+    ).execute()
+    times = [f["modifiedTime"] for f in results.get("files", [])]
+    return max(times) if times else ""
+
+# --- フォルダ一覧取得 ---
+@st.cache_data(show_spinner=False)
+def list_available_dates(guild_id: str, modified: str):
+    service = get_drive_service()
+    prefix = f"{guild_id}_"
+    results = service.files().list(
+        q=f"'{PARENT_FOLDER_ID}' in parents and name contains '{prefix}' and trashed = false",
+        fields="files(name)",
+        orderBy="name desc"
+    ).execute()
+    zip_files = results.get("files", [])
+    return sorted([f["name"].replace(prefix, "").replace(".zip", "") for f in zip_files], reverse=True)
+
 # --- ZIPファイルをダウンロードして展開 ---
 @st.cache_resource(show_spinner=False)
-def extract_zip_for_date(guild_id: str, date_folder: str):
+def extract_zip_for_date(guild_id: str, date_folder: str, modified: str):
     service = get_drive_service()
     zip_name = f"{guild_id}_{date_folder}.zip"
     query = (
@@ -56,23 +81,6 @@ def extract_zip_for_date(guild_id: str, date_folder: str):
             zip_ref.extractall(extract_path)
 
     return extract_path
-
-# --- ローカルから画像読み込み ---
-def load_local_image(path: str):
-    return Image.open(path).convert("RGB")
-
-# --- フォルダ一覧取得 ---
-@st.cache_data(show_spinner=False)
-def list_available_dates(guild_id: str):
-    service = get_drive_service()
-    prefix = f"{guild_id}_"
-    results = service.files().list(
-        q=f"'{PARENT_FOLDER_ID}' in parents and name contains '{prefix}' and trashed = false",
-        fields="files(name)",
-        orderBy="name desc"
-    ).execute()
-    zip_files = results.get("files", [])
-    return sorted([f["name"].replace(prefix, "").replace(".zip", "") for f in zip_files], reverse=True)
 
 # --- GIF分解 ---
 @st.cache_data(show_spinner=False)
@@ -127,13 +135,14 @@ def show_thumbnail_grid():
     st.title("Gartic Phone アルバム")
 
     guild_id = st.session_state.guild_id
-    dates = list_available_dates(guild_id)
+    modified = get_drive_modified_time(guild_id)
+    dates = list_available_dates(guild_id, modified)
     selected_date = st.sidebar.selectbox("日付を選択", dates)
 
     if "page_index" not in st.session_state:
         st.session_state.page_index = 0
 
-    extract_path = extract_zip_for_date(guild_id, selected_date)
+    extract_path = extract_zip_for_date(guild_id, selected_date, modified)
     gif_files = sorted([
         f for f in os.listdir(extract_path)
         if f.endswith(".gif")

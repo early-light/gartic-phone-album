@@ -12,9 +12,7 @@ from googleapiclient.http import MediaIoBaseDownload
 
 # === 設定 ===
 IMAGES_PER_PAGE = 50
-#PASSWORD = st.secrets["auth"]["password"]
 PARENT_FOLDER_ID = "1NNXwYExNh-JRgV4e-UXH0xIUzDk8kVdM"  # images フォルダのID
-#DISCORD_GUILD_ID = "1285122590247223336"  # Reina西(Protected) サーバーID
 
 st.set_page_config(layout="wide")
 
@@ -29,9 +27,8 @@ def get_drive_service():
 
 # --- ZIPファイルをダウンロードして展開 ---
 @st.cache_resource(show_spinner=False)
-def extract_zip_for_date(date_folder: str):
+def extract_zip_for_date(guild_id: str, date_folder: str):
     service = get_drive_service()
-    guild_id = st.session_state.guild_id
     zip_name = f"{guild_id}_{date_folder}.zip"
     query = (
         f"'{PARENT_FOLDER_ID}' in parents and "
@@ -66,9 +63,8 @@ def load_local_image(path: str):
 
 # --- フォルダ一覧取得 ---
 @st.cache_data(show_spinner=False)
-def list_available_dates():
+def list_available_dates(guild_id: str):
     service = get_drive_service()
-    guild_id = st.session_state.guild_id
     prefix = f"{guild_id}_"
     results = service.files().list(
         q=f"'{PARENT_FOLDER_ID}' in parents and name contains '{prefix}' and trashed = false",
@@ -109,11 +105,11 @@ def check_login():
 
         st.title("ログイン")
         server_options = {
-            v['name']: k for k, v in st.secrets["servers"].items()
+            v["name"]: k for k, v in st.secrets["servers"].items()
         }
         server_name = st.selectbox("サーバー名を選択", options=list(server_options.keys()))
         pw = st.text_input("パスワードを入力", type="password")
-        
+
         if st.button("ログイン"):
             guild_id = server_options[server_name]
             correct_pw = st.secrets["servers"][guild_id]["password"]
@@ -130,13 +126,14 @@ def check_login():
 def show_thumbnail_grid():
     st.title("Gartic Phone アルバム")
 
-    dates = list_available_dates()
+    guild_id = st.session_state.guild_id
+    dates = list_available_dates(guild_id)
     selected_date = st.sidebar.selectbox("日付を選択", dates)
 
     if "page_index" not in st.session_state:
         st.session_state.page_index = 0
 
-    extract_path = extract_zip_for_date(selected_date)
+    extract_path = extract_zip_for_date(guild_id, selected_date)
     gif_files = sorted([
         f for f in os.listdir(extract_path)
         if f.endswith(".gif")

@@ -82,6 +82,10 @@ def extract_zip_for_date(guild_id: str, date_folder: str, modified: str):
 
     return extract_path
 
+# --- ローカルから画像読み込み ---
+def load_local_image(path: str):
+    return Image.open(path).convert("RGB")
+
 # --- GIF分解 ---
 @st.cache_data(show_spinner=False)
 def split_gif_frames_once(gif_path: str):
@@ -95,10 +99,6 @@ def split_gif_frames_once(gif_path: str):
     except EOFError:
         pass
     return frames
-
-# --- ローカルから画像読み込み ---
-def load_local_image(path: str):
-    return Image.open(path).convert("RGB")
 
 # === ログイン判定 ===
 def check_login():
@@ -220,61 +220,3 @@ def show_thumbnail_grid():
                 st.session_state.page = "viewer"
                 st.session_state.frame_index = 0
                 st.rerun()
-
-# === GIF閲覧ページ ===
-def show_viewer():
-    logout_button()
-    st.title("GIF スライドショー")
-    gif_filename = st.session_state.get("selected_gif")
-    date = st.session_state.get("selected_date")
-    if not gif_filename or not date:
-        st.error("GIFが選択されていません")
-        return
-
-    gif_path = os.path.join(tempfile.gettempdir(), date, gif_filename)
-    frames = split_gif_frames_once(gif_path)
-
-    idx = st.session_state.get("frame_index", 0)
-
-    buf = io.BytesIO()
-    frames[idx].save(buf, format="PNG")
-    b64_img = base64.b64encode(buf.getvalue()).decode("utf-8")
-
-    st.markdown(
-        f"""
-        <div style="text-align: center; margin: 30px 0;">
-            <img src="data:image/png;base64,{b64_img}" width="770">
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    nav_cols = st.columns([1, 8, 1])
-    with nav_cols[1]:
-        nav_subcols = st.columns(len(frames) + 2)
-        if nav_subcols[0].button("◀", use_container_width=True) and idx > 0:
-            st.session_state.frame_index -= 1
-            st.rerun()
-        for i in range(len(frames)):
-            label = f"{i+1}"
-            if nav_subcols[i+1].button(label, use_container_width=True):
-                st.session_state.frame_index = i
-                st.rerun()
-        if nav_subcols[-1].button("▶", use_container_width=True) and idx < len(frames) - 1:
-            st.session_state.frame_index += 1
-            st.rerun()
-
-    if st.button("戻る"):
-        st.session_state.page = "home"
-        st.rerun()
-
-# === メイン ===
-check_login()
-
-if "page" not in st.session_state:
-    st.session_state.page = "home"
-
-if st.session_state.page == "home":
-    show_thumbnail_grid()
-elif st.session_state.page == "viewer":
-    show_viewer()

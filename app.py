@@ -134,8 +134,16 @@ def check_login():
                 st.error("パスワードが違います")
         st.stop()
 
+# === ログアウト処理 ===
+def logout_button():
+    if st.sidebar.button("ログアウト"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
+
 # === サムネイル一覧表示 ===
 def show_thumbnail_grid():
+    logout_button()
     st.title("Gartic Phone アルバム")
 
     guild_id = st.session_state.guild_id
@@ -215,6 +223,7 @@ def show_thumbnail_grid():
 
 # === GIF閲覧ページ ===
 def show_viewer():
+    logout_button()
     st.title("GIF スライドショー")
     gif_filename = st.session_state.get("selected_gif")
     date = st.session_state.get("selected_date")

@@ -12,8 +12,9 @@ from googleapiclient.http import MediaIoBaseDownload
 
 # === 設定 ===
 IMAGES_PER_PAGE = 50
-PASSWORD = st.secrets["auth"]["password"]
+#PASSWORD = st.secrets["auth"]["password"]
 PARENT_FOLDER_ID = "1NNXwYExNh-JRgV4e-UXH0xIUzDk8kVdM"  # images フォルダのID
+#DISCORD_GUILD_ID = "1285122590247223336"  # Reina西(Protected) サーバーID
 
 st.set_page_config(layout="wide")
 
@@ -30,18 +31,20 @@ def get_drive_service():
 @st.cache_resource(show_spinner=False)
 def extract_zip_for_date(date_folder: str):
     service = get_drive_service()
+    guild_id = st.session_state.guild_id
+    zip_name = f"{guild_id}_{date_folder}.zip"
     query = (
         f"'{PARENT_FOLDER_ID}' in parents and "
-        f"name = '{date_folder}.zip' and mimeType != 'application/vnd.google-apps.folder' and trashed = false"
+        f"name = '{zip_name}' and mimeType != 'application/vnd.google-apps.folder' and trashed = false"
     )
     results = service.files().list(q=query, fields="files(id, name)").execute()
     items = results.get("files", [])
     if not items:
-        st.error(f"{date_folder}.zip が見つかりません")
+        st.error(f"{zip_name} が見つかりません")
         st.stop()
 
     file_id = items[0]["id"]
-    zip_temp_path = os.path.join(tempfile.gettempdir(), f"{date_folder}.zip")
+    zip_temp_path = os.path.join(tempfile.gettempdir(), zip_name)
     extract_path = os.path.join(tempfile.gettempdir(), date_folder)
 
     if not os.path.exists(extract_path):
@@ -65,13 +68,15 @@ def load_local_image(path: str):
 @st.cache_data(show_spinner=False)
 def list_available_dates():
     service = get_drive_service()
+    guild_id = st.session_state.guild_id
+    prefix = f"{guild_id}_"
     results = service.files().list(
-        q=f"'{PARENT_FOLDER_ID}' in parents and name contains '.zip' and trashed = false",
+        q=f"'{PARENT_FOLDER_ID}' in parents and name contains '{prefix}' and trashed = false",
         fields="files(name)",
         orderBy="name desc"
     ).execute()
     zip_files = results.get("files", [])
-    return sorted([f["name"].replace(".zip", "") for f in zip_files], reverse=True)
+    return sorted([f["name"].replace(prefix, "").replace(".zip", "") for f in zip_files], reverse=True)
 
 # --- GIF分解 ---
 @st.cache_data(show_spinner=False)
@@ -103,10 +108,19 @@ def check_login():
         """, unsafe_allow_html=True)
 
         st.title("ログイン")
+        server_options = {
+            v['name']: k for k, v in st.secrets["servers"].items()
+        }
+        server_name = st.selectbox("サーバー名を選択", options=list(server_options.keys()))
         pw = st.text_input("パスワードを入力", type="password")
+        
         if st.button("ログイン"):
-            if pw == PASSWORD:
+            guild_id = server_options[server_name]
+            correct_pw = st.secrets["servers"][guild_id]["password"]
+            if pw == correct_pw:
                 st.session_state.logged_in = True
+                st.session_state.guild_id = guild_id
+                st.session_state.server_name = server_name
                 st.rerun()
             else:
                 st.error("パスワードが違います")

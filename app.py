@@ -82,18 +82,21 @@ def extract_zip_for_date(guild_id: str, date_folder: str, modified: str):
 
     return extract_path
 
-# --- GIF分解 ---
+# --- GIF分解(PNGならそのまま) ---
 @st.cache_data(show_spinner=False)
-def split_gif_frames_once(gif_path: str):
-    gif = Image.open(gif_path)
+def split_gif_frames_once(image_path: str):
+    img = Image.open(image_path)
     frames = []
-    try:
-        while True:
-            frame = gif.copy().convert("RGB")
-            frames.append(frame)
-            gif.seek(len(frames))
-    except EOFError:
-        pass
+    if image_path.lower().endswith(".gif"):
+        try:
+            while True:
+                frame = img.copy().convert("RGB")
+                frames.append(frame)
+                img.seek(len(frames))
+        except EOFError:
+            pass
+    else:
+        frames.append(img.convert("RGB"))
     return frames
 
 # --- ローカルから画像読み込み ---
@@ -157,7 +160,7 @@ def show_thumbnail_grid():
     extract_path = extract_zip_for_date(guild_id, selected_date, modified)
     gif_files = sorted([
         f for f in os.listdir(extract_path)
-        if f.endswith(".gif")
+        if f.endswith(".gif") or f.endswith(".png")
     ])
 
     total_pages = math.ceil(len(gif_files) / IMAGES_PER_PAGE)

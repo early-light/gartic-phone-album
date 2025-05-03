@@ -6,6 +6,7 @@ import math
 import os
 import tempfile
 import zipfile
+from hashlib import md5
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
@@ -32,10 +33,13 @@ def get_drive_modified_time(guild_id: str):
     prefix = f"{guild_id}_"
     results = service.files().list(
         q=f"'{PARENT_FOLDER_ID}' in parents and name contains '{prefix}' and trashed = false",
-        fields="files(modifiedTime)",
+        fields="files(id, name, modifiedTime)",
     ).execute()
-    times = [f["modifiedTime"] for f in results.get("files", [])]
-    return max(times) if times else ""
+    files = results.get("files", [])
+    if not files:
+        return ""
+    hash_input = ",".join(sorted(f'{f["name"]}:{f["modifiedTime"]}' for f in files))
+    return md5(hash_input.encode()).hexdigest()
 
 # --- フォルダ一覧取得 ---
 @st.cache_data(show_spinner=False)
@@ -51,8 +55,8 @@ def list_available_dates(guild_id: str, modified: str):
     return sorted([f["name"].replace(prefix, "").replace(".zip", "") for f in zip_files], reverse=True)
 
 # --- ZIPファイルをダウンロードして展開 ---
-@st.cache_resource(show_spinner=False)
-def extract_zip_for_date(guild_id: str, date_folder: str, modified: str):
+@st.cache_resource(show_spinner=False, hash_funcs={"builtins.str": lambda _: None})
+def extract_zip_for_date(guild_id: str, date_folder: str, modified: str = ""):
     service = get_drive_service()
     zip_name = f"{guild_id}_{date_folder}.zip"
     query = (
@@ -67,7 +71,7 @@ def extract_zip_for_date(guild_id: str, date_folder: str, modified: str):
 
     file_id = items[0]["id"]
     zip_temp_path = os.path.join(tempfile.gettempdir(), zip_name)
-    extract_path = os.path.join(tempfile.gettempdir(), f"{guild_id}_{date_folder}")
+    extract_path = os.path.join(tempfile.gettempdir(), f"{guild_id}_{date_folder}_{modified}")
 
     if not os.path.exists(extract_path):
         request = service.files().get_media(fileId=file_id)

@@ -26,54 +26,36 @@ def get_drive_service():
     )
     return build("drive", "v3", credentials=credentials)
 
-# --- Drive更新時間を取得 ---
+# --- Driveファイル一覧と各ZIPの更新時間取得 ---
 @st.cache_data(show_spinner=False)
-def get_drive_modified_time(guild_id: str):
+def get_zip_file_info(guild_id: str):
     service = get_drive_service()
     prefix = f"{guild_id}_"
     results = service.files().list(
         q=f"'{PARENT_FOLDER_ID}' in parents and name contains '{prefix}' and trashed = false",
         fields="files(id, name, modifiedTime)",
-    ).execute()
-    files = results.get("files", [])
-    if not files:
-        return ""
-    hash_input = ",".join(sorted(f'{f["name"]}:{f["modifiedTime"]}' for f in files))
-    return md5(hash_input.encode()).hexdigest()
-
-# --- フォルダ一覧取得 ---
-@st.cache_data(show_spinner=False)
-def list_available_dates(guild_id: str, modified: str):
-    service = get_drive_service()
-    prefix = f"{guild_id}_"
-    results = service.files().list(
-        q=f"'{PARENT_FOLDER_ID}' in parents and name contains '{prefix}' and trashed = false",
-        fields="files(name)",
         orderBy="name desc"
     ).execute()
-    zip_files = results.get("files", [])
-    return sorted([f["name"].replace(prefix, "").replace(".zip", "") for f in zip_files], reverse=True)
+    files = results.get("files", [])
+    info = {}
+    for f in files:
+        if f["name"].endswith(".zip"):
+            date = f["name"].replace(prefix, "").replace(".zip", "")
+            info[date] = {
+                "id": f["id"],
+                "modified": f["modifiedTime"]
+            }
+    return info
 
 # --- ZIPファイルをダウンロードして展開 ---
-@st.cache_resource(show_spinner=False, hash_funcs={"builtins.str": lambda _: None})
-def extract_zip_for_date(guild_id: str, date_folder: str, modified: str = ""):
-    service = get_drive_service()
+@st.cache_resource(show_spinner=False)
+def extract_zip_for_date(guild_id: str, date_folder: str, file_id: str, modified_time: str):
     zip_name = f"{guild_id}_{date_folder}.zip"
-    query = (
-        f"'{PARENT_FOLDER_ID}' in parents and "
-        f"name = '{zip_name}' and mimeType != 'application/vnd.google-apps.folder' and trashed = false"
-    )
-    results = service.files().list(q=query, fields="files(id, name)").execute()
-    items = results.get("files", [])
-    if not items:
-        st.error(f"{zip_name} が見つかりません")
-        st.stop()
-
-    file_id = items[0]["id"]
     zip_temp_path = os.path.join(tempfile.gettempdir(), zip_name)
-    extract_path = os.path.join(tempfile.gettempdir(), f"{guild_id}_{date_folder}_{modified}")
+    extract_path = os.path.join(tempfile.gettempdir(), f"{guild_id}_{date_folder}_{md5(modified_time.encode()).hexdigest()}")
 
     if not os.path.exists(extract_path):
+        service = get_drive_service()
         request = service.files().get_media(fileId=file_id)
         with open(zip_temp_path, "wb") as f:
             downloader = MediaIoBaseDownload(f, request)
@@ -154,14 +136,17 @@ def show_thumbnail_grid():
     st.title("Gartic Phone アルバム")
 
     guild_id = st.session_state.guild_id
-    modified = get_drive_modified_time(guild_id)
-    dates = list_available_dates(guild_id, modified)
+    file_info = get_zip_file_info(guild_id)
+    dates = sorted(file_info.keys(), reverse=True)
     selected_date = st.sidebar.selectbox("日付を選択", dates)
 
     if "page_index" not in st.session_state:
         st.session_state.page_index = 0
 
-    extract_path = extract_zip_for_date(guild_id, selected_date, modified)
+    selected_file_id = file_info[selected_date]["id"]
+    modified_time = file_info[selected_date]["modified"]
+
+    extract_path = extract_zip_for_date(guild_id, selected_date, selected_file_id, modified_time)
     gif_files = sorted([
         f for f in os.listdir(extract_path)
         if f.endswith(".gif") or f.endswith(".png")
@@ -234,8 +219,10 @@ def show_viewer():
         st.error("GIFが選択されていません")
         return
 
-    modified = get_drive_modified_time(guild_id)
-    extract_path = extract_zip_for_date(guild_id, date, modified)
+    file_info = get_zip_file_info(guild_id)
+    file_id = file_info[date]["id"]
+    modified_time = file_info[date]["modified"]
+    extract_path = extract_zip_for_date(guild_id, date, file_id, modified_time)
     gif_path = os.path.join(extract_path, gif_filename)
     frames = split_gif_frames_once(gif_path)
 
